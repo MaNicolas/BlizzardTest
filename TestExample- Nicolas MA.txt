@@ -1,0 +1,122 @@
+using System;
+using System.Collections;
+using System.Linq;
+using FluentAssertions;
+using NUnit.Framework;
+using Rewards;
+using Scopely.Tests.Common;
+using Scopely.Tests.Common.Tests.Editor.Common.Extensions;
+using Stumble.Currencies;
+using Stumble.Tests.Common;
+using UnityEngine.TestTools;
+using Object = UnityEngine.Object;
+
+namespace Stumble.Tests.Menu.Integration
+{
+    public class PurchaseSkins : AbstractMenuIntegrationTests
+    {
+        public enum RarityCase
+        {
+            Common,
+            Rare,
+            Epic
+        }
+
+        private static RarityCase[] _rarityCases = Enum.GetValues(typeof(RarityCase)).Cast<RarityCase>().ToArray();
+
+        private int _gemsBalanceBefore;
+        private int _gemsBalanceAfter;
+        private int _coinsBalanceBefore;
+        private int _coinsBalanceAfter;
+
+        private const int CommonPrice = 30;
+        private const int RarePrice = 45;
+        private const int EpicPrice = 17;
+
+        private SkinPopupHelper SkinPopupHelper => Object.FindObjectOfType<SkinPopupHelper>();
+        private RewardsCeremonyController RewardsCeremonyController =>
+            Object.FindObjectOfType<RewardsCeremonyController>();
+        private ShopViewController ShopViewController => Object.FindObjectOfType<ShopViewController>();
+
+        [UnityTest]
+        public IEnumerator Purchase([ValueSource(nameof(_rarityCases))] RarityCase rarityCase)
+        {
+            yield return CreateAsyncTester(nameof(Purchase))
+                .ActAsync(async () =>
+                {
+                    //TODO: ActAsync will take more than 5s due to the wheel not being skip-able.
+                    //TODO: Increase AssertTime() in IArrangedAsyncTester.cs ?
+                    switch(rarityCase)
+                    {
+                        case RarityCase.Common:
+                            ShortCuts.Instance.ApplyShortCuts<GemsShorCut>(CommonPrice);
+                            break;
+                        case RarityCase.Rare:
+                            ShortCuts.Instance.ApplyShortCuts<GemsShorCut>(RarePrice);
+                            break;
+                        case RarityCase.Epic:
+                            ShortCuts.Instance.ApplyShortCuts<CoinsShortcut>(EpicPrice);
+                            break;
+                    }
+
+                    Fixture.Find.FindObjectWithTag("GemsButton").TriggerClick();
+                    await Fixture.Wait.ForMenuStateAsync(MenuStateController.SHOP_VIEW_NAME);
+
+                    await Fixture.Find.WaitForObjectWithTagAsync("Skins");
+                    Fixture.Find.FindObjectWithTag("Skins").TriggerClick();
+
+                    switch(rarityCase)
+                    {
+                        case RarityCase.Common:
+                            _gemsBalanceBefore = CurrencyManager.GetBalance("gems");
+                            Fixture.Find.FindObjectWithTag("BuyCommonSkin").TriggerClick();
+                            break;
+                        case RarityCase.Rare:
+                            _gemsBalanceBefore = CurrencyManager.GetBalance("gems");
+                            Fixture.Find.FindObjectWithTag("BuyRareSkin").TriggerClick();
+                            break;
+                        case RarityCase.Epic:
+                            _coinsBalanceBefore = CurrencyManager.GetBalance("dust");
+                            Fixture.Find.FindObjectWithTag("BuyEpicSkin").TriggerClick();
+                            break;
+                    }
+
+                    Fixture.Find.FindObjectWithTag("BuySkinButton").TriggerClick();
+
+                    await Fixture.Wait.ForMenuStateAsync(MenuStateController.SPIN_VIEW_NAME);
+
+                    await Fixture.Wait.ForMenuStateAsync(MenuStateController.REWARDS_CEREMONY_VIEW_NAME);
+
+                    Fixture.Find.FindObjectWithTag("OkButton").TriggerClick();
+
+                    await Fixture.Wait.ForMenuStateAsync(MenuStateController.SHOP_VIEW_NAME);
+                })
+                .Assert(() =>
+                {
+                    MenuStateController.Instance.GetCurrentState().Should().Be(MenuStateController.SHOP_VIEW_NAME);
+                    MenuStateController.Instance.PreviousMenuScreenId.Should().Be(MenuStateController.REWARDS_CEREMONY_VIEW_NAME);
+                    RewardsCeremonyController.Should().BeNull();
+                    ShopViewController.Should().ExistAndBeEnabled();
+
+                    SkinPopupHelper.Should().ExistAndBeEnabled();
+
+                    switch(rarityCase)
+                    {
+                        case RarityCase.Common:
+                            _gemsBalanceAfter = CurrencyManager.GetBalance("gems");
+                            _gemsBalanceAfter.Should().Be(_gemsBalanceBefore - CommonPrice);
+                            break;
+                        case RarityCase.Rare:
+                            _gemsBalanceAfter = CurrencyManager.GetBalance("gems");
+                            _gemsBalanceAfter.Should().Be(_gemsBalanceBefore - RarePrice);
+                            break;
+                        case RarityCase.Epic:
+                            _coinsBalanceAfter = CurrencyManager.GetBalance("dust");
+                            _coinsBalanceAfter.Should().Be(_coinsBalanceBefore - EpicPrice);
+                            break;
+                    }
+                })
+                .RunCoroutine();
+        }
+    }
+}
